@@ -49,7 +49,11 @@ def test_seed_and_variants(db):
             orders.build_lines(s, [{"sid": album.id, "vid": None, "qty": 5000}])
         v2 = album.variants[1]
         line = orders.build_lines(s, [{"sid": album.id, "vid": v2.id, "qty": 5000}])[0]
-        assert line.total_minor == 5 * 5500 and "Двухсторонняя" in line.name
+        # вводятся страницы: 5 стр. = 2 листа × 55 + 1 нечётная стр. × 35
+        assert line.total_minor == 2 * 5500 and "Двухсторонняя" in line.name and "(5 стр.)" in line.name
+        assert line.qty_milli == 2000
+        odd = orders.build_lines(s, [{"sid": album.id, "vid": v2.id, "qty": 5000}])[1]
+        assert odd.total_minor == 3500 and odd.qty_milli == 1000
 
 
 def test_catalog_changes_do_not_touch_history(db):
@@ -88,11 +92,11 @@ def test_multi_item_order_and_idempotency(db):
     with session_scope() as s:
         cid = mk_client(s)
         a, b = svc(s, "Конспект"), svc(s, "Двухсторонняя печать")
-        items = [{"sid": a.id, "vid": None, "qty": 2000}, {"sid": b.id, "vid": None, "qty": 4000}]
+        items = [{"sid": a.id, "vid": None, "qty": 2000}, {"sid": b.id, "vid": None, "qty": 4000}]  # 4 стр. = 2 листа
         o1, c1 = orders.create_order(s, items=items, client_id=cid, key="same")
         o2, c2 = orders.create_order(s, items=items, client_id=cid, key="same")
         assert c1 and not c2 and o1.id == o2.id
-        assert o1.total_minor == 2 * 20000 + 4 * 5500
+        assert o1.total_minor == 2 * 20000 + 2 * 5500
         assert s.query(Order).count() == 1
 
 

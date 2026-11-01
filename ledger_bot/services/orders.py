@@ -21,6 +21,28 @@ class Line:
     total_minor: int
 
 
+def pages_to_sheets(sv, variant, qty_milli: int) -> tuple[int, int, int]:
+    """Разбор введённого количества: (листы для расчёта ×1000, одиночные страницы, всего страниц).
+
+    Обычные услуги: количество как есть.
+    Двусторонняя печать: вводят СТРАНИЦЫ. Пары страниц идут на лист по цене листа, а лишняя
+    нечётная страница печатается с одной стороны по цене «нечётной страницы» (35 ₸). Если эта цена не
+    задана, лишняя страница считается как целый лист.
+    Примеры: 13 стр. = 6 листов × 55 + 1 стр. × 35 = 365 ₸; 19 стр. = 9 × 55 + 35 = 530 ₸.
+    """
+    pps = catalog.pages_per_sheet(sv, variant)
+    if pps <= 1:
+        validate_qty(sv.calc_type, qty_milli)
+        return qty_milli, 0, 0
+    if qty_milli % 1000:
+        raise ServiceError("Страниц должно быть целое число.")
+    pages = qty_milli // 1000
+    sheets, rest = divmod(pages, pps)
+    if rest and catalog.odd_page_price(sv, variant) is None:
+        sheets, rest = sheets + 1, 0
+    return sheets * 1000, rest, pages
+
+
 def build_lines(s: Session, items: list[dict]) -> list[Line]:
     """items: [{'sid':…, 'vid':…|None, 'qty': milli}] → строки с текущими ценами каталога."""
     if not items:
@@ -38,11 +60,20 @@ def build_lines(s: Session, items: list[dict]) -> list[Line]:
                 raise ServiceError(f"Вариант услуги «{sv.name}» недоступен.")
         elif variants:
             raise ServiceError(f"Для «{sv.name}» нужно выбрать вариант.")
-        validate_qty(sv.calc_type, it["qty"])
+        qty, odd, pages = pages_to_sheets(sv, variant, it["qty"])
         price = variant.price_minor if variant else sv.price_minor
-        name = f"{sv.name} — {variant.name}" if variant else sv.name
-        lines.append(Line(sv.id, variant.id if variant else None, name, it["qty"],
-                          sv.unit, price, line_total(price, it["qty"])))
+        base = f"{sv.name} — {variant.name}" if variant else sv.name
+        vid = variant.id if variant else None
+        if not pages:  # обычная услуга
+            lines.append(Line(sv.id, vid, base, qty, sv.unit, price, line_total(price, qty)))
+            continue
+        if qty:
+            lines.append(Line(sv.id, vid, f"{base} ({pages} стр.)", qty, sv.unit, price,
+                              line_total(price, qty)))
+        if odd:  # последняя нечётная страница — с одной стороны
+            op = catalog.odd_page_price(sv, variant)
+            name = f"{base} — последняя стр. с одной стороны" if qty else f"{base} (1 стр. с одной стороны)"
+            lines.append(Line(sv.id, vid, name, odd * 1000, "стр.", op, line_total(op, odd * 1000)))
     return lines
 
 

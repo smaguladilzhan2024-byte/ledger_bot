@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import changes
@@ -14,6 +14,33 @@ _factory = None
 @event.listens_for(Session, "after_flush")
 def _remember_write(session, flush_context):
     session.info["wrote"] = True  # в этой транзакции что-то записывалось
+
+
+def _migrate(engine) -> None:
+    """Старая база (без новых колонок) дополняется на месте: данные не теряются."""
+    insp = inspect(engine)
+    with engine.begin() as con:
+        for table in ("services", "service_variants"):
+            cols = {c["name"] for c in insp.get_columns(table)}
+            if "pages_per_sheet" not in cols:
+                con.execute(text(f"ALTER TABLE {table} ADD COLUMN pages_per_sheet INTEGER NOT NULL DEFAULT 1"))
+                # один раз: уже существующая «двухсторонняя печать» → 2 страницы на лист
+                for rid, name in con.execute(text(f"SELECT id, name FROM {table}")).all():
+                    low = (name or "").casefold()
+                    if "двухсторон" in low or "двусторон" in low:
+                        con.execute(text(f"UPDATE {table} SET pages_per_sheet = 2 WHERE id = :i"), {"i": rid})
+            if "odd_page_price_minor" not in cols:
+                con.execute(text(f"ALTER TABLE {table} ADD COLUMN odd_page_price_minor INTEGER"))
+                # один раз: нечётная страница = цена «Односторонней печати» из каталога
+                single = None
+                for name, price in con.execute(text("SELECT name, price_minor FROM services")).all():
+                    low = (name or "").casefold()
+                    if "односторон" in low:
+                        single = price
+                        break
+                if single is not None:
+                    con.execute(text(f"UPDATE {table} SET odd_page_price_minor = :p WHERE pages_per_sheet > 1"),
+                                {"p": single})
 
 
 def init_db(path: str):
@@ -29,7 +56,8 @@ def init_db(path: str):
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
 
-    Base.metadata.create_all(_engine)
+    Base.metadata.create_all(_engine)  # новые таблицы (например, attachments) создаются сами
+    _migrate(_engine)
     _factory = sessionmaker(_engine, expire_on_commit=False)
 
 
