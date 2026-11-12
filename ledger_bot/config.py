@@ -16,6 +16,8 @@ class Config:
     database_path: str
     backup_dir: Path
     file_retention_days: int = 14
+    debt_remind_days: int = 3   # 0 = напоминания выключены
+    remind_hour: int = 10       # во сколько (по времени владельца) присылать напоминание
 
 
 def load_config() -> Config:
@@ -31,4 +33,6 @@ def load_config() -> Config:
         database_path=os.getenv("DATABASE_PATH", "data/ledger.db"),
         backup_dir=Path(os.getenv("BACKUP_DIR", "data/backups")),
         file_retention_days=max(1, int(os.getenv("FILE_RETENTION_DAYS", "14"))),
+        debt_remind_days=max(0, int(os.getenv("DEBT_REMIND_DAYS", "3"))),
+        remind_hour=min(23, max(0, int(os.getenv("REMIND_HOUR", "10")))),
     )

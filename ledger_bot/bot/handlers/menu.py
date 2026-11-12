@@ -7,7 +7,8 @@ from ...db.session import session_scope
 from ...money import fmt_money
 from ...services import clients as client_svc
 from ..common import show
-from ..keyboards import MENU_ITEMS, main_menu
+from ..keyboards import MENU_ITEMS, ikb, main_menu
+from ..remind import build_message
 from . import catalog, clients, finance, orders, payments, settings
 
 router = Router()
@@ -25,6 +26,17 @@ ACTIONS = {
     "Настройки": settings.start_settings,
 }
 assert set(ACTIONS) == set(MENU_ITEMS)
+
+
+@router.message(Command("remind"))
+async def cmd_remind(message: Message, state: FSMContext):
+    """Долги старше N дней: показать прямо сейчас (расписание автоматических напоминаний не меняется)."""
+    msg = build_message(settings.CFG.get("remind_days") or 3, force=True)
+    if not msg:
+        await message.answer("Просроченных долгов нет.")
+        return
+    text, rows, _ = msg
+    await message.answer(text, reply_markup=ikb(rows) if rows else None)
 
 
 @router.message(CommandStart())

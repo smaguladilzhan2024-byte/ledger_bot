@@ -72,6 +72,7 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text)
+    last_reminded_on: Mapped[Optional[date]] = mapped_column(Date)  # когда бот последний раз напоминал о долге
     items: Mapped[list["OrderItem"]] = relationship(
         cascade="all, delete-orphan", order_by="OrderItem.id")
 

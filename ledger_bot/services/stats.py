@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -5,7 +6,8 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models import Adjustment, Client, Order, Payment, PaymentAllocation, Transaction
+from ..db.models import (Adjustment, Client, Order, OrderItem, Payment, PaymentAllocation,
+                         Service, Transaction)
 from ..money import fmt_money
 from . import balance
 
@@ -186,3 +188,67 @@ def format_chart(rows: list[tuple[str, int, int]]) -> str:
 
 def chart_text(s: Session, key: str, start: date | None, end: date | None) -> str:
     return format_chart(chart_rows(key, start, end, daily_flows(s, start, end)))
+
+
+# ---------- расход бумаги ----------
+MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь",
+          "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+
+def pack_sheets() -> int:
+    """Листов в пачке (по умолчанию 500; можно поменять переменной PAPER_PACK_SHEETS)."""
+    try:
+        return max(1, int(os.getenv("PAPER_PACK_SHEETS", "500")))
+    except ValueError:
+        return 500
+
+
+def _month_back(d: date, n: int) -> date:
+    y, m = d.year, d.month - n
+    while m <= 0:
+        y, m = y - 1, m + 12
+    return date(y, m, 1)
+
+
+def paper_by_month(s: Session, today: date, months: int = 3) -> list[tuple[date, int]]:
+    """Листов бумаги по месяцам (от старых к новым, последний — текущий месяц).
+
+    Считаются позиции услуг «по листам» в неотменённых заказах: у двусторонней печати в заказе уже
+    листы, а лишняя нечётная страница занимает свой лист. Конспекты и услуги не по листам не входят.
+    """
+    first = _month_back(today, months - 1)
+    rows = s.execute(
+        select(Order.created_at, OrderItem.qty_milli)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .join(Service, Service.id == OrderItem.service_id)
+        .where(Order.status != "cancelled", Service.calc_type == "sheet",
+               Order.created_at >= datetime.combine(first, datetime.min.time()))).all()
+    milli: dict[tuple[int, int], int] = defaultdict(int)
+    for created, qty in rows:
+        milli[(created.year, created.month)] += qty
+    out = []
+    for i in range(months - 1, -1, -1):
+        m = _month_back(today, i)
+        out.append((m, -(-milli[(m.year, m.month)] // 1000)))
+    return out
+
+
+def _packs(sheets: int, pack: int) -> str:
+    return f"{sheets / pack:.1f}".replace(".", ",").replace(",0", "")
+
+
+def format_paper(rows: list[tuple[date, int]], today: date, pack: int | None = None) -> str:
+    pack = pack or pack_sheets()
+    lines = [f"Расход бумаги (пачка = {pack} л.)", ""]
+    for m, sheets in reversed(rows):
+        mark = f" (идёт, на {today:%d.%m})" if (m.year, m.month) == (today.year, today.month) else ""
+        lines.append(f"{MONTHS[m.month - 1].capitalize()} {m.year}{mark}: {sheets} л. ≈ {_packs(sheets, pack)} пач.")
+    full = [sheets for m, sheets in rows if (m.year, m.month) != (today.year, today.month)]
+    basis = max(full) if full else (rows[-1][1] if rows else 0)
+    if basis:
+        lines += ["", f"Чтобы хватило на месяц, как самый большой из прошлых: {basis} л. = "
+                      f"{-(-basis // pack)} пач. (с запасом до целой пачки)."]
+    else:
+        lines += ["", "Пока нет заказов с печатью по листам."]
+    lines.append("Считаются заказы с печатью по листам; конспекты и отменённые заказы не входят.")
+    return "\n".join(lines)

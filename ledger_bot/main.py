@@ -11,6 +11,7 @@ from sqlalchemy import text
 from pathlib import Path
 
 from .autobackup import autosend_loop
+from .bot.remind import remind_loop
 from .bot.access import OwnerOnly
 from .bot.handlers import catalog, clients, files, finance, menu, orders, payments, settings
 from .config import load_config
@@ -101,13 +102,15 @@ async def main():
     with session_scope() as s:
         catalog_svc.seed_defaults(s)
     changes.clear()  # стартовые данные — не повод отправлять копию
-    settings.CFG.update(db=cfg.database_path, backups=cfg.backup_dir)
+    settings.CFG.update(db=cfg.database_path, backups=cfg.backup_dir, remind_days=cfg.debt_remind_days)
     attachments.RETENTION_DAYS = cfg.file_retention_days
     bot = Bot(cfg.bot_token)
     dp = build_dispatcher(cfg.owner_ids)
     task = asyncio.create_task(backup_loop(cfg.database_path, cfg.backup_dir))
     send_task = asyncio.create_task(autosend_loop(bot, cfg.owner_ids, cfg.database_path, cfg.backup_dir))
     purge_task = asyncio.create_task(purge_loop(cfg.file_retention_days))
+    remind_task = (asyncio.create_task(remind_loop(bot, cfg.owner_ids, cfg.debt_remind_days, cfg.remind_hour))
+                   if cfg.debt_remind_days else None)
     if fresh:
         for oid in cfg.owner_ids:
             try:
@@ -130,6 +133,8 @@ async def main():
         task.cancel()
         send_task.cancel()
         purge_task.cancel()
+        if remind_task:
+            remind_task.cancel()
         if runner:
             await runner.cleanup()
 

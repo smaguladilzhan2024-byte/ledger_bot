@@ -177,7 +177,15 @@ async def start_stats(message: Message, state: FSMContext):
     await state.clear()
     keys = list(stats.PERIODS)
     await message.answer("За какой период?", reply_markup=ikb(
-        [[(stats.PERIODS[k], f"st:{k}") for k in keys[:3]], [(stats.PERIODS[k], f"st:{k}") for k in keys[3:]]]))
+        [[(stats.PERIODS[k], f"st:{k}") for k in keys[:3]], [(stats.PERIODS[k], f"st:{k}") for k in keys[3:]],
+         [("Расход бумаги", "st:paper")]]))
+
+
+@router.callback_query(F.data == "st:paper")
+async def paper_show(cb: CallbackQuery, state: FSMContext):
+    with session_scope() as s:
+        text = stats.format_paper(stats.paper_by_month(s, today()), today())
+    await show(cb, text)
 
 
 @router.callback_query(F.data.startswith("st:"))

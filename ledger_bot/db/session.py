@@ -43,6 +43,13 @@ def _migrate(engine) -> None:
                                 {"p": single})
 
 
+def _migrate_orders(engine) -> None:
+    cols = {c["name"] for c in inspect(engine).get_columns("orders")}
+    if "last_reminded_on" not in cols:
+        with engine.begin() as con:
+            con.execute(text("ALTER TABLE orders ADD COLUMN last_reminded_on DATE"))
+
+
 def init_db(path: str):
     global _engine, _factory
     if _engine is not None:
@@ -58,6 +65,7 @@ def init_db(path: str):
 
     Base.metadata.create_all(_engine)  # новые таблицы (например, attachments) создаются сами
     _migrate(_engine)
+    _migrate_orders(_engine)
     _factory = sessionmaker(_engine, expire_on_commit=False)
 
 
