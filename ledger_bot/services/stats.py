@@ -110,7 +110,7 @@ def format_stats(st: Stats, title: str) -> str:
 
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-BAR_WIDTH = 12
+BAR_WIDTH = 10  # цветные квадраты шире букв, поэтому 10, а не 12
 
 
 def daily_flows(s: Session, start: date | None, end: date | None) -> dict[date, list[int]]:
@@ -172,17 +172,17 @@ def _bar(value: int, top: int, ch: str) -> str:
 
 
 def format_chart(rows: list[tuple[str, int, int]]) -> str:
-    """Текстовая гистограмма: █ получено, ▒ расходы (длина считается от самого большого значения)."""
+    """Текстовая гистограмма: 🟩 получено, 🟥 расходы (длина считается от самого большого значения)."""
     top = max((max(i, e) for _, i, e in rows), default=0)
     if top <= 0:
         return ""
-    out = ["Гистограмма: █ получено, ▒ расходы"]
+    out = ["Гистограмма: 🟩 получено, 🟥 расходы"]
     for label, inc, exp in rows:
         out.append("")
         out.append(label)
-        out.append(f"{_bar(inc, top, '█')} {fmt_money(inc)}")
+        out.append(f"{_bar(inc, top, '🟩')} {fmt_money(inc)}")
         if exp:
-            out.append(f"{_bar(exp, top, '▒')} {fmt_money(exp)}")
+            out.append(f"{_bar(exp, top, '🟥')} {fmt_money(exp)}")
     return "\n".join(out)
 
 

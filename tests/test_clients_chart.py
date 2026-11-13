@@ -106,7 +106,7 @@ def test_chart_week_bars_scale_and_expenses(db):
         rows = stats.chart_rows("week", start, t, stats.daily_flows(s, start, t))
     assert rows[0][1:] == (100000, 50000) and len(rows) == t.weekday() + 1
     text = stats.format_chart(rows)
-    assert "█" * stats.BAR_WIDTH in text and "▒" * (stats.BAR_WIDTH // 2) in text and "1 000 ₸" in text
+    assert "🟩" * stats.BAR_WIDTH in text and "🟥" * (stats.BAR_WIDTH // 2) in text and "1 000 ₸" in text
 
 
 def test_chart_month_weeks_and_all_time_months(db):
