@@ -9,11 +9,11 @@ from sqlalchemy import select
 from ...db.models import Order
 from ...db.session import session_scope
 from ...money import fmt_money, parse_money
-from ...services import balance, clients as client_svc, orders as order_svc, payments as pay_svc
+from ...timeutil import today
+from ...services import balance, clients as client_svc, orders as order_svc, payments as pay_svc, reminders
 from .. import clientpick
 from ..common import show
 from ..format import client_text, fmt_dt, order_text
-from ...timeutil import today
 from ..keyboards import CANCEL, ikb
 
 router = Router()
@@ -126,6 +126,8 @@ async def got_phone(message: Message, state: FSMContext):
 def _card_kb(cid, debt, credit, archived):
     rows = [[("Принять оплату", f"pay:c:{cid}"), ("Заказы", f"cl:o:{cid}")],
             [("История", f"cl:h:{cid}")]]
+    if debt > 0:
+        rows.append([("Сообщение клиенту о долге", f"cl:m:{cid}")])
     if credit > 0:
         rows.append([("Вернуть переплату", f"cl:rf:{cid}")])
     rows.append([("Имя", f"cl:e:name:{cid}"), ("Телефон", f"cl:e:phone:{cid}"), ("Заметка", f"cl:e:note:{cid}")])
@@ -145,6 +147,23 @@ async def show_client(event, cid):
 async def client_card(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_client(cb, int(cb.data.split(":")[2]))
+
+
+@router.callback_query(F.data.regexp(r"^cl:m:\d+$"))
+async def client_message(cb: CallbackQuery, state: FSMContext):
+    """Готовое сообщение клиенту «сколько ты ещё должен»: нажмите на текст, он скопируется."""
+    cid = int(cb.data.split(":")[2])
+    with session_scope() as s:
+        entry = reminders.client_entry(s, cid, today())
+    await cb.answer()
+    if not entry:
+        await cb.message.answer("У этого клиента сейчас нет долга.")
+        return
+    await cb.message.answer("Сообщение клиенту. Нажмите на текст, чтобы скопировать, и отправьте ему.\n\n"
+                            "По-русски:\n"
+                            f"<code>{reminders.esc(reminders.client_text(entry))}</code>\n\n"
+                            "Қазақша:\n"
+                            f"<code>{reminders.esc(reminders.client_text_kz(entry))}</code>", parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("cl:h:"))

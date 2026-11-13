@@ -36,7 +36,7 @@ async def cmd_remind(message: Message, state: FSMContext):
         await message.answer("Просроченных долгов нет.")
         return
     text, rows, _ = msg
-    await message.answer(text, reply_markup=ikb(rows) if rows else None)
+    await message.answer(text, reply_markup=ikb(rows) if rows else None, parse_mode="HTML")
 
 
 @router.message(CommandStart())

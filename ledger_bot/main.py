@@ -3,6 +3,7 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ErrorEvent
 from aiohttp import web
@@ -105,6 +106,16 @@ async def main():
     settings.CFG.update(db=cfg.database_path, backups=cfg.backup_dir, remind_days=cfg.debt_remind_days)
     attachments.RETENTION_DAYS = cfg.file_retention_days
     bot = Bot(cfg.bot_token)
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="menu", description="Главное меню"),
+            BotCommand(command="remind", description="Долги: напоминание сейчас"),
+            BotCommand(command="backup", description="Копия базы"),
+            BotCommand(command="restore", description="Восстановить из копии"),
+            BotCommand(command="cancel", description="Отмена"),
+        ])
+    except Exception:
+        log.warning("Не удалось обновить список команд бота")
     dp = build_dispatcher(cfg.owner_ids)
     task = asyncio.create_task(backup_loop(cfg.database_path, cfg.backup_dir))
     send_task = asyncio.create_task(autosend_loop(bot, cfg.owner_ids, cfg.database_path, cfg.backup_dir))

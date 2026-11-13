@@ -15,7 +15,9 @@ CANCEL = [("Отмена", "x:cancel")]
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=t) for t in row] for row in MENU_ROWS],
-        resize_keyboard=True)
+        resize_keyboard=True,
+        is_persistent=True,  # на компьютере кнопки остаются на экране, не прячутся за значком клавиатуры
+        input_field_placeholder="Выберите действие или напишите имя клиента")
 
 
 def ikb(rows) -> InlineKeyboardMarkup:

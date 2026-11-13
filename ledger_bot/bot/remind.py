@@ -16,7 +16,7 @@ def build_message(days: int, force: bool = False):
         entries = reminders.due(s, today(), days, force=force)
         if not entries:
             return None
-        text, client_ids, order_ids = reminders.digest(entries, days)
+        text, client_ids, order_ids = reminders.digest(entries, days, as_html=True)
         names = {e["client_id"]: e["name"] for e in entries}
     rows = [[(f"Открыть: {names[c]}", f"cl:c:{c}")] for c in client_ids[:8]]
     return text, rows, order_ids
@@ -30,7 +30,7 @@ async def send_due(bot, owner_ids, days: int) -> bool:
     sent = False
     for oid in owner_ids:
         try:
-            await bot.send_message(oid, text, reply_markup=ikb(rows) if rows else None)
+            await bot.send_message(oid, text, reply_markup=ikb(rows) if rows else None, parse_mode="HTML")
             sent = True
         except Exception:
             log.warning("Не удалось отправить напоминание владельцу %s", oid)
