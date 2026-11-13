@@ -233,8 +233,29 @@ def paper_by_month(s: Session, today: date, months: int = 3) -> list[tuple[date,
     return out
 
 
+def paper_sheets(s: Session, start: date | None, end: date | None) -> int:
+    """Листов бумаги за период (те же правила, что в отчёте «Расход бумаги»)."""
+    q = (select(OrderItem.qty_milli)
+         .join(Order, OrderItem.order_id == Order.id)
+         .join(Service, Service.id == OrderItem.service_id)
+         .where(Order.status != "cancelled", Service.calc_type == "sheet"))
+    if start:
+        q = q.where(Order.created_at >= datetime.combine(start, datetime.min.time()))
+    if end:
+        q = q.where(Order.created_at < datetime.combine(end + timedelta(days=1), datetime.min.time()))
+    return -(-sum(s.scalars(q)) // 1000)
+
+
+def paper_line(sheets: int, pack: int | None = None) -> str:
+    pack = pack or pack_sheets()
+    return f"Бумага за период: {sheets} л. ≈ {_packs(sheets, pack)} пач. (пачка = {pack} л.)"
+
+
 def _packs(sheets: int, pack: int) -> str:
-    return f"{sheets / pack:.1f}".replace(".", ",").replace(",0", "")
+    ratio = sheets / pack
+    if 0 < ratio < 0.1:
+        return "<0,1"
+    return f"{ratio:.1f}".replace(".", ",").replace(",0", "")
 
 
 def format_paper(rows: list[tuple[date, int]], today: date, pack: int | None = None) -> str:

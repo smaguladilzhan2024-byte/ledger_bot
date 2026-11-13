@@ -64,3 +64,20 @@ def test_paper_button_in_stats_menu(db):
         return h.last_text()
     text = run(scenario())
     assert "Расход бумаги" in text and "7 л." in text
+
+
+def test_stats_message_shows_paper_for_the_period(db):
+    with session_scope() as s:
+        _order(s, "a", [{"sid": svc(s, "Односторонняя печать").id, "vid": None, "qty": 7000}])
+        _order(s, "b", [{"sid": svc(s, "Конспект").id, "vid": None, "qty": 3000}])            # конспекты не считаются
+        old = _order(s, "c", [{"sid": svc(s, "Односторонняя печать").id, "vid": None, "qty": 40000}], back_days=400)
+        assert stats.paper_sheets(s, today(), today()) == 7
+        assert stats.paper_sheets(s, None, None) == 47
+
+    async def scenario():
+        h = Harness()
+        await h.say("Финансовая статистика")
+        await h.tap("st:today")
+        return h.last_text()
+    text = run(scenario())
+    assert "Бумага за период: 7 л. ≈ <0,1 пач. (пачка = 500 л.)" in text     # денег за сегодня нет, поэтому гистограммы нет

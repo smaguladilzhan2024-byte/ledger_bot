@@ -194,5 +194,6 @@ async def stats_show(cb: CallbackQuery, state: FSMContext):
     start, end = stats.period_range(key, today())
     with session_scope() as s:
         text = stats.format_stats(stats.compute(s, start, end), stats.PERIODS[key])
+        paper = stats.paper_line(stats.paper_sheets(s, start, end))
         chart = stats.chart_text(s, key, start, end)
-    await show(cb, text + ("\n\n" + chart if chart else ""))
+    await show(cb, text + "\n\n" + paper + ("\n\n" + chart if chart else ""))
