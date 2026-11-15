@@ -14,6 +14,12 @@ from ..errors import ServiceError
 from ..timeutil import now
 
 RETENTION_DAYS = 14  # main.py подставляет FILE_RETENTION_DAYS
+FIELDS = ("media", "file_id", "unique_id", "file_name", "size")
+
+
+def clean(f: dict) -> dict:
+    """Только поля, которые хранятся в базе (в черновике у файла есть ещё, например, число страниц)."""
+    return {k: f[k] for k in FIELDS if k in f}
 
 
 def add(s: Session, *, media: str, file_id: str, unique_id=None, file_name=None, size=None,

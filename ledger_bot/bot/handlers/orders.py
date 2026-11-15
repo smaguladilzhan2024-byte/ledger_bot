@@ -56,6 +56,15 @@ async def _show_pick(event, state: FSMContext):
                ikb(rows))
 
 
+async def _after_client(event, state: FSMContext):
+    """Клиент выбран. Если позиции уже есть (заказ начат с файла), сразу на подтверждение."""
+    data = await state.get_data()
+    if data.get("mode") == "order" and data.get("items"):
+        await show_confirm(event, state)
+    else:
+        await _show_pick(event, state)
+
+
 async def start_order(message: Message, state: FSMContext):
     await state.clear()
     await state.update_data(mode="order", items=[], key=uuid.uuid4().hex, client_id=None)
@@ -97,11 +106,11 @@ async def choose_client(cb: CallbackQuery, state: FSMContext):
             cid = client_svc.create_client(s, typed).id
         await state.update_data(client_id=cid)
         await state.set_state(None)
-        await _show_pick(cb, state)
+        await _after_client(cb, state)
     else:
         await state.update_data(client_id=None if val == "none" else int(val))
         await state.set_state(None)
-        await _show_pick(cb, state)
+        await _after_client(cb, state)
 
 
 @router.message(OrderFlow.client_search, F.text)
@@ -120,7 +129,7 @@ async def new_client(message: Message, state: FSMContext):
         cid = c.id
     await state.update_data(client_id=cid)
     await state.set_state(None)
-    await _show_pick(message, state)
+    await _after_client(message, state)
 
 
 @router.callback_query(F.data.startswith("oi:c:"))
@@ -239,7 +248,7 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
         saved = 0
         if created:  # файлы из черновика сохраняются в той же транзакции, что и заказ
             for fl in data.get("files") or []:
-                saved += attachments.add(s, order_id=order.id, **fl)[1]
+                saved += attachments.add(s, order_id=order.id, **attachments.clean(fl))[1]
         text = order_text(s, order)
         oid, has_client = order.id, order.client_id is not None
     await state.clear()

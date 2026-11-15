@@ -3,6 +3,10 @@
 Бот не скачивает файлы: он запоминает ссылку Telegram (file_id) и имя. Диск сервера не растёт.
 Через FILE_RETENTION_DAYS дней ссылка стирается, запись об оплате и файле остаётся.
 """
+import asyncio
+import io
+import logging
+
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
@@ -14,12 +18,14 @@ from sqlalchemy import select
 from ...db.models import Client, Order, Payment
 from ...db.session import session_scope
 from ...money import fmt_money
-from ...services import attachments
+from ...services import attachments, catalog, orders as order_svc, pagecount
 from ..common import show
 from ..keyboards import CANCEL, ikb
 from . import orders
 
 router = Router()
+log = logging.getLogger("ledger_bot")
+MAX_DOWNLOAD = 20 * 1024 * 1024  # Telegram отдаёт боту файлы только до 20 МБ
 ANY_FILE = F.document | F.photo
 
 
@@ -50,24 +56,125 @@ def _keep_note() -> str:
     return f"Хранится {attachments.RETENTION_DAYS} дн., потом ссылка удаляется (запись о файле остаётся)."
 
 
-# ---------- файл прислали без контекста ----------
+# ---------- файл прислали без контекста: считаем страницы и сразу показываем цену ----------
+async def fetch_bytes(bot, file_id: str, size: int | None):
+    """Скачивает файл в память (на диск не пишется). None, если файл слишком большой или не скачался."""
+    if size and size > MAX_DOWNLOAD:
+        return None
+    buf = io.BytesIO()
+    try:
+        await bot.download(file_id, destination=buf)
+    except Exception:
+        log.warning("Не удалось скачать файл для подсчёта страниц")
+        return None
+    return buf.getvalue()
+
+
+async def _count(message: Message, f: dict) -> int | None:
+    if pagecount.is_image(f.get("file_name"), f["media"]):
+        return 1
+    if not pagecount.needs_download(f.get("file_name"), f["media"]):
+        return None
+    data = await fetch_bytes(message.bot, f["file_id"], f.get("size"))
+    if data is None:
+        return None
+    try:  # разбор в отдельном потоке и с лимитом времени, чтобы бот не «замирал»
+        return await asyncio.wait_for(
+            asyncio.to_thread(pagecount.count_pages, data, f.get("file_name"), f["media"]), 20)
+    except Exception:
+        return None
+
+
+def _total_pages(data: dict) -> int | None:
+    """Всего страниц: введённое вручную число или сумма по всем файлам (если известны все)."""
+    if data.get("manual"):
+        return data["manual"]
+    files = data.get("files") or []
+    if files and all(x.get("pages") for x in files):
+        return sum(x["pages"] for x in files)
+    return None
+
+
+def print_options(s) -> list:
+    """Услуги для быстрого заказа: односторонняя печать и двусторонняя (2 стр. на лист)."""
+    svcs = [sv for sv in catalog.list_services(s)
+            if sv.is_active and not sv.is_archived and sv.calc_type == "sheet" and not sv.variants]
+    single = next((sv for sv in svcs if sv.pages_per_sheet == 1 and "односторон" in sv.name.casefold()), None)
+    duplex = next((sv for sv in svcs if sv.pages_per_sheet > 1), None)
+    return [sv for sv in (single, duplex) if sv]
+
+
+def _breakdown(lines) -> str:
+    parts = []
+    for l in lines:
+        q = l.qty_milli // 1000 if l.qty_milli % 1000 == 0 else l.qty_milli / 1000
+        parts.append(f"{q} {'л.' if l.unit == 'лист' else l.unit} × {fmt_money(l.price_minor)}")
+    return " + ".join(parts)
+
+
+async def _offer(message: Message, state: FSMContext):
+    data = await state.get_data()
+    files, total = data["files"], _total_pages(data)
+    names = ", ".join(_label(x) for x in files[:3]) + (f" и ещё {len(files) - 3}" if len(files) > 3 else "")
+    rows, text = [], ""
+    if total:
+        text = f"{'Файлы' if len(files) > 1 else 'Файл'} «{names}»: {total} стр.\n"
+        with session_scope() as s:
+            for sv in print_options(s):
+                lines = order_svc.build_lines(s, [{"sid": sv.id, "vid": None, "qty": total * 1000}])
+                price = sum(l.total_minor for l in lines)
+                text += f"\n{sv.name}: {fmt_money(price)} ({_breakdown(lines)})"
+                rows.append([(f"{sv.name} — {fmt_money(price)}", f"fl:q:{sv.id}")])
+        text += "\n\nВыберите, как печатать, и я оформлю заказ."
+    else:
+        unknown = ", ".join(_label(x) for x in files if not x.get("pages")) or names
+        text = (f"Не смог посчитать страницы: «{unknown}». Напишите число страниц сообщением, "
+                "и я сразу посчитаю цену. Или выберите, куда сохранить файл.")
+    rows += [[("Новый заказ (услугу выберу сам)", "fl:new")],
+             [("К существующему заказу", "fl:lo")], [("Это чек об оплате", "fl:lp")], CANCEL]
+    await message.answer(text, reply_markup=ikb(rows))
+
+
 @router.message(StateFilter(None), ANY_FILE)
 async def stray_file(message: Message, state: FSMContext):
     f = extract(message)
+    f["pages"] = await _count(message, f)
     await state.set_state(FileFlow.choose)
-    await state.update_data(files=[f])
-    await message.answer(f"Куда сохранить «{_label(f)}»?", reply_markup=ikb([
-        [("Новый заказ с этим файлом", "fl:new")],
-        [("К существующему заказу", "fl:lo")],
-        [("Это чек об оплате", "fl:lp")], CANCEL]))
+    await state.update_data(files=[f], manual=None)
+    await _offer(message, state)
 
 
 @router.message(FileFlow.choose, ANY_FILE)
 async def more_stray(message: Message, state: FSMContext):
     data = await state.get_data()
-    files = data["files"] + [extract(message)]
-    await state.update_data(files=files)
-    await message.answer(f"Добавлено. Файлов: {len(files)}. Выберите, куда сохранить, в сообщении выше.")
+    f = extract(message)
+    f["pages"] = await _count(message, f)
+    await state.update_data(files=data["files"] + [f])
+    await _offer(message, state)
+
+
+@router.message(FileFlow.choose, F.text.regexp(r"^\s*\d{1,4}\s*$"))
+async def manual_pages(message: Message, state: FSMContext):
+    n = int(message.text)
+    if n < 1:
+        await message.answer("Страниц должно быть больше нуля.")
+        return
+    await state.update_data(manual=n)
+    await _offer(message, state)
+
+
+@router.callback_query(F.data.regexp(r"^fl:q:\d+$"), FileFlow.choose)
+async def quick_order(cb: CallbackQuery, state: FSMContext):
+    """Заказ в один шаг: страницы уже посчитаны, осталось выбрать клиента и подтвердить."""
+    data = await state.get_data()
+    total = _total_pages(data)
+    if not total:
+        await cb.answer("Сначала напишите число страниц.", show_alert=True)
+        return
+    sid, files = int(cb.data.split(":")[2]), data["files"]
+    await orders.start_order(cb.message, state)
+    await state.update_data(files=files, items=[{"sid": sid, "vid": None, "qty": total * 1000}])
+    await cb.answer()
 
 
 @router.callback_query(F.data == "fl:new", FileFlow.choose)
@@ -172,7 +279,7 @@ def _save(files: list[dict], kind: str, tid: int) -> int:
     with session_scope() as s:
         for f in files:
             n += attachments.add(s, order_id=tid if kind == "o" else None,
-                                 payment_id=tid if kind == "p" else None, **f)[1]
+                                 payment_id=tid if kind == "p" else None, **attachments.clean(f))[1]
     return n
 
 

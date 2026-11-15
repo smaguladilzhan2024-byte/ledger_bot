@@ -268,7 +268,7 @@ def test_stray_file_to_new_order_existing_order_and_receipt(db):
     async def scenario():
         h = Harness()
         await h.send_file("from_client.docx")           # файл без контекста
-        assert "Куда сохранить" in h.last_text()
+        assert "Не смог посчитать страницы" in h.last_text()     # .docx без скачивания: страницы вручную
         await h.tap("fl:lo")
         await h.tap(f"fl:to:o:{oid}")
         await h.send_file("kaspi.pdf")
